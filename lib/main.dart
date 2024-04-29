@@ -68,6 +68,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
   _createPeerConnection() async {
     Map<String, dynamic> configuration = {
+      "sdpSemantics": "plan-b",
       'iceServers': [
         {"url": "stun:stun.l.google.com:19302"}
       ]
