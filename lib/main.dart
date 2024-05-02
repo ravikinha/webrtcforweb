@@ -35,6 +35,8 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
+  bool _localZoom = false;
+
   TextEditingController sdpController = TextEditingController();
   final _localRender = new RTCVideoRenderer();
   final _remoteRender = new RTCVideoRenderer();
@@ -69,8 +71,10 @@ class _MyHomePageState extends State<MyHomePage> {
   _createPeerConnection() async {
     Map<String, dynamic> configuration = {
       "sdpSemantics": "plan-b",
+      "bundlePolicy": 'max-compat',
+      "rtcpMuxPolicy": 'negotiate',
       'iceServers': [
-        {"url": "stun:stun.l.google.com:19302"}
+        {"url": "stun:stun.stunprotocol.org"}
       ]
     };
 
@@ -109,7 +113,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
   _getUserMedia() async {
     final Map<String, dynamic> mediaConstraints = {
-      "audio": false,
+      "audio": true,
       "video": {
         'facingMode': 'user',
       },
@@ -121,58 +125,77 @@ class _MyHomePageState extends State<MyHomePage> {
 
   _createOffer() async {
     RTCSessionDescription description =
-    await _rtcPeerConnection!.createOffer({'offerToReceiveVideo': 1});
+        await _rtcPeerConnection!.createOffer({'offerToReceiveVideo': 1});
     var session = parse(description.sdp.toString());
     print(jsonEncode(session));
     _offer = true;
     _rtcPeerConnection!.setLocalDescription(description);
   }
 
-  _createAnswer()async{
+  _createAnswer() async {
     RTCSessionDescription description =
-    await _rtcPeerConnection!.createAnswer({'offerToReceiveVideo': 1});
+        await _rtcPeerConnection!.createAnswer({'offerToReceiveVideo': 1});
     var session = parse(description.sdp.toString());
     print(jsonEncode(session));
     _rtcPeerConnection!.setLocalDescription(description);
-
   }
 
-  _setRemoteDesc()async{
+  _setRemoteDesc() async {
     String jsonString = sdpController.text;
     dynamic session = await jsonDecode("$jsonString");
     String sdp = write(session, null);
-    RTCSessionDescription description = new RTCSessionDescription(sdp,_offer?'answer':'offer');
+    RTCSessionDescription description =
+        new RTCSessionDescription(sdp, _offer ? 'answer' : 'offer');
     print(description.toMap());
     await _rtcPeerConnection!.setRemoteDescription(description);
   }
-  _setCandidate()async{
+
+  _setCandidate() async {
     String jsonString = sdpController.text;
     dynamic session = await jsonDecode("$jsonString");
     print(session["candidate"]);
-    dynamic candidate = RTCIceCandidate(session["candidate"],session["sdpMid"],session["sdpMlineIndex"]);
+    dynamic candidate = RTCIceCandidate(
+        session["candidate"], session["sdpMid"], session["sdpMlineIndex"]);
     await _rtcPeerConnection!.addCandidate(candidate);
   }
 
-
   SizedBox videoRenders() => SizedBox(
-        height: 200,
+        // height: 200,
         // width: 300,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
+        child: Stack(
           children: [
-            Container(
-              color: Colors.black,
-              height: 150,
-              width: 150,
-              key: Key("local"),
-              child: RTCVideoView(_localRender),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                Container(
+                  color: Colors.black,
+                  height: MediaQuery.of(context).size.height -
+                      MediaQuery.of(context).size.height / 4,
+                  width: MediaQuery.of(context).size.width,
+                  key: Key("local"),
+                  child:
+                      RTCVideoView(!_localZoom ? _remoteRender : _localRender),
+                ),
+              ],
             ),
-            Container(
-              color: Colors.black,
-              height: 150,
-              width: 150,
-              key: Key("remote"),
-              child: RTCVideoView(_remoteRender),
+            Positioned(
+              bottom: 0,
+              right: 0,
+              child: GestureDetector(
+                onDoubleTap: () {
+                  setState(() {
+                    _localZoom = !_localZoom;
+                  });
+                },
+                child: Container(
+                  color: Colors.black,
+                  height: 150,
+                  width: 150,
+                  key: Key("remote"),
+                  child:
+                      RTCVideoView(!_localZoom ? _localRender : _remoteRender),
+                ),
+              ),
             ),
           ],
         ),
@@ -203,8 +226,7 @@ class _MyHomePageState extends State<MyHomePage> {
           ElevatedButton(
               onPressed: _setRemoteDesc, child: Text("Set Remote Desc.")),
           ElevatedButton(
-              onPressed: _setCandidate,
-              child: Text("Add candidite")),
+              onPressed: _setCandidate, child: Text("Add candidite")),
         ],
       );
 
@@ -219,9 +241,16 @@ class _MyHomePageState extends State<MyHomePage> {
             children: [
               // RTCVideoView(_localRender),
               videoRenders(),
-              offerAndAnswerButtons(),
-              sdpCondidateTF(),
-              sdpCondidatesButtons(),
+              Container(
+                height: MediaQuery.of(context).size.height / 4,
+                child: Column(
+                  children: [
+                    offerAndAnswerButtons(),
+                    sdpCondidateTF(),
+                    sdpCondidatesButtons(),
+                  ],
+                ),
+              )
             ],
           ),
         ),
