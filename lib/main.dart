@@ -1,17 +1,26 @@
 import 'dart:convert';
 
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:sdp_transform/sdp_transform.dart';
 
-void main() {
+import 'chatroom/chatRoom.dart';
+import 'firebase_options.dart';
+
+// ...
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
   runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -20,26 +29,30 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const webSocket(title: 'Flutter Demo Home Page'),
+      // home: ChatRoom(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
+class webSocket extends StatefulWidget {
+  const webSocket({super.key, required this.title});
 
   final String title;
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<webSocket> createState() => _webSocketState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
+class _webSocketState extends State<webSocket> {
+  bool _showChat = false;
   bool _localZoom = false;
+  bool _isMicMuted = false;
+  bool _isVideoOff = false;
 
   TextEditingController sdpController = TextEditingController();
-  final _localRender = new RTCVideoRenderer();
-  final _remoteRender = new RTCVideoRenderer();
+  final _localRender = RTCVideoRenderer();
+  final _remoteRender = RTCVideoRenderer();
   RTCPeerConnection? _rtcPeerConnection;
   MediaStream? _localStream;
   bool _offer = false;
@@ -52,7 +65,6 @@ class _MyHomePageState extends State<MyHomePage> {
     });
 
     super.initState();
-    // TODO: implement initState
   }
 
   @override
@@ -91,6 +103,7 @@ class _MyHomePageState extends State<MyHomePage> {
     RTCPeerConnection pc =
         await createPeerConnection(configuration, offerSdpConstrains);
     pc.addStream(_localStream!);
+    int a = 0;
     pc.onIceCandidate = (e) {
       if (e.candidate != null) {
         print(json.encode({
@@ -98,7 +111,14 @@ class _MyHomePageState extends State<MyHomePage> {
           "sdpMid": e.sdpMid.toString(),
           "sdpMlineIndex": e.sdpMLineIndex,
         }));
+        if (a == 0)
+          sendMessage(json.encode({
+            "candidate": e.candidate.toString(),
+            "sdpMid": e.sdpMid.toString(),
+            "sdpMlineIndex": e.sdpMLineIndex,
+          }));
       }
+      print(a++);
     };
     pc.onIceConnectionState = (e) {
       print(e);
@@ -113,14 +133,43 @@ class _MyHomePageState extends State<MyHomePage> {
 
   _getUserMedia() async {
     final Map<String, dynamic> mediaConstraints = {
-      "audio": true,
-      "video": {
-        'facingMode': 'user',
-      },
+      "audio": !_isMicMuted,
+      "video": !_isVideoOff
+          ? {
+              'facingMode': 'user',
+            }
+          : false,
     };
     MediaStream stream = await navigator.getUserMedia(mediaConstraints);
     _localRender.srcObject = stream;
     return stream;
+  }
+
+  _toggleMic() {
+    setState(() {
+      _isMicMuted = !_isMicMuted;
+    });
+    _updateMediaStream();
+  }
+
+  _toggleVideo() {
+    setState(() {
+      _isVideoOff = !_isVideoOff;
+    });
+    _updateMediaStream();
+  }
+
+  _updateMediaStream() async {
+    await _localStream?.dispose();
+    _localStream = await _getUserMedia();
+    _localStream!.getTracks().forEach((track) {
+      if (track.kind == 'audio') {
+        track.enabled = !_isMicMuted;
+      }
+      if (track.kind == 'video') {
+        track.enabled = !_isVideoOff;
+      }
+    });
   }
 
   _createOffer() async {
@@ -128,6 +177,7 @@ class _MyHomePageState extends State<MyHomePage> {
         await _rtcPeerConnection!.createOffer({'offerToReceiveVideo': 1});
     var session = parse(description.sdp.toString());
     print(jsonEncode(session));
+    sendMessage(jsonEncode(session));
     _offer = true;
     _rtcPeerConnection!.setLocalDescription(description);
   }
@@ -137,6 +187,7 @@ class _MyHomePageState extends State<MyHomePage> {
         await _rtcPeerConnection!.createAnswer({'offerToReceiveVideo': 1});
     var session = parse(description.sdp.toString());
     print(jsonEncode(session));
+    sendMessage(jsonEncode(session));
     _rtcPeerConnection!.setLocalDescription(description);
   }
 
@@ -145,7 +196,7 @@ class _MyHomePageState extends State<MyHomePage> {
     dynamic session = await jsonDecode("$jsonString");
     String sdp = write(session, null);
     RTCSessionDescription description =
-        new RTCSessionDescription(sdp, _offer ? 'answer' : 'offer');
+        RTCSessionDescription(sdp, _offer ? 'answer' : 'offer');
     print(description.toMap());
     await _rtcPeerConnection!.setRemoteDescription(description);
   }
@@ -160,8 +211,6 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   SizedBox videoRenders() => SizedBox(
-        // height: 200,
-        // width: 300,
         child: Stack(
           children: [
             Row(
@@ -170,7 +219,7 @@ class _MyHomePageState extends State<MyHomePage> {
                 Container(
                   color: Colors.black,
                   height: MediaQuery.of(context).size.height -
-                      MediaQuery.of(context).size.height / 4,
+                      MediaQuery.of(context).size.height / 3,
                   width: MediaQuery.of(context).size.width,
                   key: Key("local"),
                   child:
@@ -233,26 +282,55 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      resizeToAvoidBottomInset: false,
+      floatingActionButton: FloatingActionButton(onPressed: () {
+        setState(() {
+          _showChat = !_showChat;
+        });
+      }),
       body: Center(
-        child: Container(
-          // width: 300,
-          // height: 300,
-          child: Column(
-            children: [
-              // RTCVideoView(_localRender),
-              videoRenders(),
-              Container(
-                height: MediaQuery.of(context).size.height / 4,
-                child: Column(
-                  children: [
-                    offerAndAnswerButtons(),
-                    sdpCondidateTF(),
-                    sdpCondidatesButtons(),
-                  ],
-                ),
-              )
-            ],
-          ),
+        child: Stack(
+          children: [
+            Container(
+              child: Column(
+                children: [
+                  videoRenders(),
+                  Container(
+                    height: MediaQuery.of(context).size.height / 3,
+                    child: Column(
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceAround,
+                          children: [
+                            ElevatedButton(
+                              onPressed: _toggleMic,
+                              child:
+                                  Text(_isMicMuted ? 'Unmute Mic' : 'Mute Mic'),
+                            ),
+                            ElevatedButton(
+                              onPressed: _toggleVideo,
+                              child: Text(_isVideoOff
+                                  ? 'Turn Video On'
+                                  : 'Turn Video Off'),
+                            ),
+                          ],
+                        ),
+                        offerAndAnswerButtons(),
+                        sdpCondidateTF(),
+                        sdpCondidatesButtons(),
+                      ],
+                    ),
+                  )
+                ],
+              ),
+            ),
+            Positioned(
+                child: AnimatedContainer(
+              duration: Duration(seconds: 1),
+              height: _showChat ? MediaQuery.of(context).size.height / 2 : 0,
+              child: ChatRoom(),
+            ))
+          ],
         ),
       ),
     );
